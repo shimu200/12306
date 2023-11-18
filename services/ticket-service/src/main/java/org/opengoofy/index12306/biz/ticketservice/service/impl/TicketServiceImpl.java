@@ -1,20 +1,3 @@
-/*
- * Licensed to the Apache Software Foundation (ASF) under one or more
- * contributor license agreements.  See the NOTICE file distributed with
- * this work for additional information regarding copyright ownership.
- * The ASF licenses this file to You under the Apache License, Version 2.0
- * (the "License"); you may not use this file except in compliance with
- * the License.  You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 package org.opengoofy.index12306.biz.ticketservice.service.impl;
 
 import cn.hutool.core.collection.CollUtil;
@@ -122,8 +105,6 @@ import static org.opengoofy.index12306.biz.ticketservice.toolkit.DateUtil.conver
 
 /**
  * 车票接口实现
- *
- * @公众号：马丁玩编程，回复：加群，添加马哥微信（备注：12306）获取项目资料
  */
 @Slf4j
 @Service
@@ -139,13 +120,21 @@ public class TicketServiceImpl extends ServiceImpl<TicketMapper, TicketDO> imple
     private final StationMapper stationMapper;
     private final SeatService seatService;
     private final TrainStationService trainStationService;
+    // 列车座位类型选择器，用于选择列车座位类型
     private final TrainSeatTypeSelector trainSeatTypeSelector;
+    // 座位余量缓存加载器，用于加载和缓存座位余量信息
     private final SeatMarginCacheLoader seatMarginCacheLoader;
+    // 抽象链式上下文，用于处理票务查询的链式逻辑
     private final AbstractChainContext<TicketPageQueryReqDTO> ticketPageQueryAbstractChainContext;
+    // 抽象链式上下文，用于处理购票的链式逻辑
     private final AbstractChainContext<PurchaseTicketReqDTO> purchaseTicketAbstractChainContext;
+    // 抽象链式上下文，用于处理退票的链式逻辑
     private final AbstractChainContext<RefundTicketReqDTO> refundReqDTOAbstractChainContext;
+    // Redisson客户端，用于操作Redis
     private final RedissonClient redissonClient;
+    // 可配置的环境，用于获取和设置应用程序的配置信息
     private final ConfigurableEnvironment environment;
+    // 票务可用性令牌桶，用于控制票务系统的访问速率
     private final TicketAvailabilityTokenBucket ticketAvailabilityTokenBucket;
     private TicketService ticketService;
 
@@ -157,25 +146,33 @@ public class TicketServiceImpl extends ServiceImpl<TicketMapper, TicketDO> imple
     @Override
     public TicketPageQueryRespDTO pageListTicketQueryV1(TicketPageQueryReqDTO requestParam) {
         // 责任链模式 验证城市名称是否存在、不存在加载缓存以及出发日期不能小于当前日期等等
+        // 处理火车票查询的责任链模式，验证城市名称、缓存加载等
         ticketPageQueryAbstractChainContext.handler(TicketChainMarkEnum.TRAIN_QUERY_FILTER.name(), requestParam);
+        // 获取 Redis 操作模板
         StringRedisTemplate stringRedisTemplate = (StringRedisTemplate) distributedCache.getInstance();
-        // 列车查询逻辑较为复杂，详细解析文章查看 https://nageoffer.com/12306/question
         // v1 版本存在严重的性能深渊问题，v2 版本完美的解决了该问题。通过 Jmeter 压测聚合报告得知，性能提升在 300% - 500%+
+        // 从 Redis 中获取起始站点和终点站点的信息
         List<Object> stationDetails = stringRedisTemplate.opsForHash()
                 .multiGet(REGION_TRAIN_STATION_MAPPING, Lists.newArrayList(requestParam.getFromStation(), requestParam.getToStation()));
+        // 统计为null的数量
         long count = stationDetails.stream().filter(Objects::isNull).count();
+        // 如果有null值，说明缓存中没有相应的站点信息，需要从数据库加载
         if (count > 0) {
             RLock lock = redissonClient.getLock(LOCK_REGION_TRAIN_STATION_MAPPING);
             lock.lock();
             try {
+                // 再次获取信息，防止多个线程同时通过前一个if判断
                 stationDetails = stringRedisTemplate.opsForHash()
                         .multiGet(REGION_TRAIN_STATION_MAPPING, Lists.newArrayList(requestParam.getFromStation(), requestParam.getToStation()));
+                // 如果仍有null值，说明需要从数据库加载站点信息
                 count = stationDetails.stream().filter(Objects::isNull).count();
                 if (count > 0) {
+                    // 从数据库获取所有站点信息
                     List<StationDO> stationDOList = stationMapper.selectList(Wrappers.emptyWrapper());
                     Map<String, String> regionTrainStationMap = new HashMap<>();
                     stationDOList.forEach(each -> regionTrainStationMap.put(each.getCode(), each.getRegionName()));
                     stringRedisTemplate.opsForHash().putAll(REGION_TRAIN_STATION_MAPPING, regionTrainStationMap);
+                    // 更新站点信息列表
                     stationDetails = new ArrayList<>();
                     stationDetails.add(regionTrainStationMap.get(requestParam.getFromStation()));
                     stationDetails.add(regionTrainStationMap.get(requestParam.getToStation()));
@@ -184,26 +181,35 @@ public class TicketServiceImpl extends ServiceImpl<TicketMapper, TicketDO> imple
                 lock.unlock();
             }
         }
+        // 存储火车票查询结果的列表
         List<TicketListDTO> seatResults = new ArrayList<>();
+        // 构建 Redis 中的火车站点关系的哈希键
         String buildRegionTrainStationHashKey = String.format(REGION_TRAIN_STATION, stationDetails.get(0), stationDetails.get(1));
+        // 从 Redis 中获取站点关系的所有信息
         Map<Object, Object> regionTrainStationAllMap = stringRedisTemplate.opsForHash().entries(buildRegionTrainStationHashKey);
+        // 如果 Redis 缓存为空，从数据库加载
         if (MapUtil.isEmpty(regionTrainStationAllMap)) {
             RLock lock = redissonClient.getLock(LOCK_REGION_TRAIN_STATION);
             lock.lock();
             try {
+                // 再次获取信息，防止多个线程同时通过前一个if判断
                 regionTrainStationAllMap = stringRedisTemplate.opsForHash().entries(buildRegionTrainStationHashKey);
+                // 如果仍为空，说明需要从数据库加载站点关系信息
                 if (MapUtil.isEmpty(regionTrainStationAllMap)) {
                     LambdaQueryWrapper<TrainStationRelationDO> queryWrapper = Wrappers.lambdaQuery(TrainStationRelationDO.class)
                             .eq(TrainStationRelationDO::getStartRegion, stationDetails.get(0))
                             .eq(TrainStationRelationDO::getEndRegion, stationDetails.get(1));
                     List<TrainStationRelationDO> trainStationRelationList = trainStationRelationMapper.selectList(queryWrapper);
+                    // 遍历站点关系列表
                     for (TrainStationRelationDO each : trainStationRelationList) {
+                        // 从缓存或数据库中获取列车信息
                         TrainDO trainDO = distributedCache.safeGet(
                                 TRAIN_INFO + each.getTrainId(),
                                 TrainDO.class,
                                 () -> trainMapper.selectById(each.getTrainId()),
                                 ADVANCE_TICKET_DAY,
                                 TimeUnit.DAYS);
+                        // 构建火车票查询结果
                         TicketListDTO result = new TicketListDTO();
                         result.setTrainId(String.valueOf(trainDO.getId()));
                         result.setTrainNumber(trainDO.getTrainNumber());
@@ -216,27 +222,37 @@ public class TicketServiceImpl extends ServiceImpl<TicketMapper, TicketDO> imple
                         result.setArrivalFlag(each.getArrivalFlag());
                         result.setTrainType(trainDO.getTrainType());
                         result.setTrainBrand(trainDO.getTrainBrand());
+                        // 分割列车标签并设置
                         if (StrUtil.isNotBlank(trainDO.getTrainTag())) {
                             result.setTrainTags(StrUtil.split(trainDO.getTrainTag(), ","));
                         }
+                        // 计算列车到达天数
                         long betweenDay = cn.hutool.core.date.DateUtil.betweenDay(each.getDepartureTime(), each.getArrivalTime(), false);
                         result.setDaysArrived((int) betweenDay);
+                        // 判断列车是否在售
                         result.setSaleStatus(new Date().after(trainDO.getSaleTime()) ? 0 : 1);
                         result.setSaleTime(convertDateToLocalTime(trainDO.getSaleTime(), "MM-dd HH:mm"));
+                        // 添加到结果列表
                         seatResults.add(result);
+                        // 将结果存入缓存
                         regionTrainStationAllMap.put(CacheUtil.buildKey(String.valueOf(each.getTrainId()), each.getDeparture(), each.getArrival()), JSON.toJSONString(result));
                     }
+                    // 将结果存入 Redis 缓存
                     stringRedisTemplate.opsForHash().putAll(buildRegionTrainStationHashKey, regionTrainStationAllMap);
                 }
             } finally {
                 lock.unlock();
             }
         }
+        // 如果座位结果列表为空，从 Redis 中的缓存中获取
         seatResults = CollUtil.isEmpty(seatResults)
                 ? regionTrainStationAllMap.values().stream().map(each -> JSON.parseObject(each.toString(), TicketListDTO.class)).toList()
                 : seatResults;
+        // 根据出发时间排序座位结果列表
         seatResults = seatResults.stream().sorted(new TimeStringComparator()).toList();
+        // 遍历座位结果列表，处理座位信息
         for (TicketListDTO each : seatResults) {
+            // 从缓存或数据库中获取列车站点价格信息
             String trainStationPriceStr = distributedCache.safeGet(
                     String.format(TRAIN_STATION_PRICE, each.getTrainId(), each.getDeparture(), each.getArrival()),
                     String.class,
@@ -250,12 +266,19 @@ public class TicketServiceImpl extends ServiceImpl<TicketMapper, TicketDO> imple
                     ADVANCE_TICKET_DAY,
                     TimeUnit.DAYS
             );
+            // 将价格信息转换为对象列表
             List<TrainStationPriceDO> trainStationPriceDOList = JSON.parseArray(trainStationPriceStr, TrainStationPriceDO.class);
+            // 存储座位类型列表
             List<SeatClassDTO> seatClassList = new ArrayList<>();
+            // 遍历价格信息列表
             trainStationPriceDOList.forEach(item -> {
+                // 获取座位类型
                 String seatType = String.valueOf(item.getSeatType());
+                // 构建缓存键的后缀
                 String keySuffix = StrUtil.join("_", each.getTrainId(), item.getDeparture(), item.getArrival());
+                // 从缓存中获取座位数量
                 Object quantityObj = stringRedisTemplate.opsForHash().get(TRAIN_STATION_REMAINING_TICKET + keySuffix, seatType);
+                // 如果缓存中没有座位数量，从缓存加载
                 int quantity = Optional.ofNullable(quantityObj)
                         .map(Object::toString)
                         .map(Integer::parseInt)
@@ -263,44 +286,66 @@ public class TicketServiceImpl extends ServiceImpl<TicketMapper, TicketDO> imple
                             Map<String, String> seatMarginMap = seatMarginCacheLoader.load(String.valueOf(each.getTrainId()), seatType, item.getDeparture(), item.getArrival());
                             return Optional.ofNullable(seatMarginMap.get(String.valueOf(item.getSeatType()))).map(Integer::parseInt).orElse(0);
                         });
+                // 构建座位类型对象并添加到座位类型列表
                 seatClassList.add(new SeatClassDTO(item.getSeatType(), quantity, new BigDecimal(item.getPrice()).divide(new BigDecimal("100"), 1, RoundingMode.HALF_UP), false));
             });
+            // 设置座位类型列表
             each.setSeatClassList(seatClassList);
         }
+        // 使用建造者模式构建 TicketPageQueryRespDTO 对象
         return TicketPageQueryRespDTO.builder()
-                .trainList(seatResults)
-                .departureStationList(buildDepartureStationList(seatResults))
-                .arrivalStationList(buildArrivalStationList(seatResults))
-                .trainBrandList(buildTrainBrandList(seatResults))
-                .seatClassTypeList(buildSeatClassList(seatResults))
-                .build();
+                .trainList(seatResults)  // 设置火车列表，数据来源为 seatResults
+                .departureStationList(buildDepartureStationList(seatResults))  // 设置出发站点列表，通过 buildDepartureStationList 方法构建
+                .arrivalStationList(buildArrivalStationList(seatResults))  // 设置到达站点列表，通过 buildArrivalStationList 方法构建
+                .trainBrandList(buildTrainBrandList(seatResults))  // 设置火车品牌列表，通过 buildTrainBrandList 方法构建
+                .seatClassTypeList(buildSeatClassList(seatResults))  // 设置座位类型列表，通过 buildSeatClassList 方法构建
+                .build();  // 构建并返回最终的 TicketPageQueryRespDTO 对象
     }
 
+
+    /**
+     * 分页查询火车票信息的方法
+     *
+     * @param requestParam 包含查询条件的请求参数对象
+     * @return TicketPageQueryRespDTO 包含火车票查询结果的响应对象
+     */
     @Override
     public TicketPageQueryRespDTO pageListTicketQueryV2(TicketPageQueryReqDTO requestParam) {
         // 责任链模式 验证城市名称是否存在、不存在加载缓存以及出发日期不能小于当前日期等等
         ticketPageQueryAbstractChainContext.handler(TicketChainMarkEnum.TRAIN_QUERY_FILTER.name(), requestParam);
+
+        // 获取分布式缓存实例
         StringRedisTemplate stringRedisTemplate = (StringRedisTemplate) distributedCache.getInstance();
-        // 列车查询逻辑较为复杂，详细解析文章查看 https://nageoffer.com/12306/question
-        // v2 版本更符合企业级高并发真实场景解决方案，完美解决了 v1 版本性能深渊问题。通过 Jmeter 压测聚合报告得知，性能提升在 300% - 500%+
-        // 其实还能有 v3 版本，性能估计在原基础上还能进一步提升一倍。不过 v3 版本太过于复杂，不易读且不易扩展，就不写具体的代码了。面试中 v2 版本已经够和面试官吹的了
+
+        // 通过责任链获取车站信息
         List<Object> stationDetails = stringRedisTemplate.opsForHash()
                 .multiGet(REGION_TRAIN_STATION_MAPPING, Lists.newArrayList(requestParam.getFromStation(), requestParam.getToStation()));
+        // 构建火车站点关系的 Hash 键
         String buildRegionTrainStationHashKey = String.format(REGION_TRAIN_STATION, stationDetails.get(0), stationDetails.get(1));
+        // 从 Redis 中获取指定 Hash 键的所有站点关系信息
         Map<Object, Object> regionTrainStationAllMap = stringRedisTemplate.opsForHash().entries(buildRegionTrainStationHashKey);
+
+        // 解析车站信息并按时间排序
         List<TicketListDTO> seatResults = regionTrainStationAllMap.values().stream()
                 .map(each -> JSON.parseObject(each.toString(), TicketListDTO.class))
                 .sorted(new TimeStringComparator())
                 .toList();
+
+        // 构建价格缓存的键值列表
         List<String> trainStationPriceKeys = seatResults.stream()
                 .map(each -> String.format(cacheRedisPrefix + TRAIN_STATION_PRICE, each.getTrainId(), each.getDeparture(), each.getArrival()))
                 .toList();
+
+        // 使用 Redis 管道批量获取价格缓存数据
         List<Object> trainStationPriceObjs = stringRedisTemplate.executePipelined((RedisCallback<String>) connection -> {
             trainStationPriceKeys.forEach(each -> connection.stringCommands().get(each.getBytes()));
             return null;
         });
+
+        // 处理价格缓存数据
         List<TrainStationPriceDO> trainStationPriceDOList = new ArrayList<>();
         List<String> trainStationRemainingKeyList = new ArrayList<>();
+
         for (Object each : trainStationPriceObjs) {
             List<TrainStationPriceDO> trainStationPriceList = JSON.parseArray(each.toString(), TrainStationPriceDO.class);
             trainStationPriceDOList.addAll(trainStationPriceList);
@@ -309,12 +354,16 @@ public class TicketServiceImpl extends ServiceImpl<TicketMapper, TicketDO> imple
                 trainStationRemainingKeyList.add(trainStationRemainingKey);
             }
         }
+
+        // 使用 Redis 管道批量获取剩余票数缓存数据
         List<Object> TrainStationRemainingObjs = stringRedisTemplate.executePipelined((RedisCallback<String>) connection -> {
             for (int i = 0; i < trainStationRemainingKeyList.size(); i++) {
                 connection.hashCommands().hGet(trainStationRemainingKeyList.get(i).getBytes(), trainStationPriceDOList.get(i).getSeatType().toString().getBytes());
             }
             return null;
         });
+
+        // 处理剩余票数缓存数据，并设置到座位结果对象中
         for (TicketListDTO each : seatResults) {
             List<Integer> seatTypesByCode = VehicleTypeEnum.findSeatTypesByCode(each.getTrainType());
             List<Object> remainingTicket = new ArrayList<>(TrainStationRemainingObjs.subList(0, seatTypesByCode.size()));
@@ -334,13 +383,15 @@ public class TicketServiceImpl extends ServiceImpl<TicketMapper, TicketDO> imple
             }
             each.setSeatClassList(seatClassList);
         }
+
+        // 使用建造者模式构建 TicketPageQueryRespDTO 对象
         return TicketPageQueryRespDTO.builder()
-                .trainList(seatResults)
-                .departureStationList(buildDepartureStationList(seatResults))
-                .arrivalStationList(buildArrivalStationList(seatResults))
-                .trainBrandList(buildTrainBrandList(seatResults))
-                .seatClassTypeList(buildSeatClassList(seatResults))
-                .build();
+                .trainList(seatResults)  // 设置火车列表，数据来源为 seatResults
+                .departureStationList(buildDepartureStationList(seatResults))  // 设置出发站点列表，通过 buildDepartureStationList 方法构建
+                .arrivalStationList(buildArrivalStationList(seatResults))  // 设置到达站点列表，通过 buildArrivalStationList 方法构建
+                .trainBrandList(buildTrainBrandList(seatResults))  // 设置火车品牌列表，通过 buildTrainBrandList 方法构建
+                .seatClassTypeList(buildSeatClassList(seatResults))  // 设置座位类型列表，通过 buildSeatClassList 方法构建
+                .build();  // 构建并返回最终的 TicketPageQueryRespDTO 对象
     }
 
     @Override
@@ -417,7 +468,6 @@ public class TicketServiceImpl extends ServiceImpl<TicketMapper, TicketDO> imple
     public TicketPurchaseRespDTO executePurchaseTickets(PurchaseTicketReqDTO requestParam) {
         List<TicketOrderDetailRespDTO> ticketOrderDetailResults = new ArrayList<>();
         String trainId = requestParam.getTrainId();
-        // 节假日高并发购票Redis能扛得住么？详情查看：https://nageoffer.com/12306/question
         TrainDO trainDO = distributedCache.safeGet(
                 TRAIN_INFO + trainId,
                 TrainDO.class,

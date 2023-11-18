@@ -1,4 +1,5 @@
 <script setup>
+// 引入Ant Design Vue组件
 import {
   Form,
   FormItem,
@@ -7,25 +8,26 @@ import {
   Button,
   message,
   Select,
-  Modal
+  ModalhandleLogin
 } from 'ant-design-vue'
+// 引入Vue相关的方法
 import { reactive, ref, unref } from 'vue'
 import { fetchLogin, fetchRegister } from '../../service'
 import { UserOutlined, LockOutlined } from '@ant-design/icons-vue'
 import { useRouter } from 'vue-router'
 import Cookies from 'js-cookie'
 const useForm = Form.useForm
-
+// 定义登录表单的初始状态
 const formState = reactive({
-  usernameOrMailOrPhone: 'admin',
-  password: 'admin123456',
+  usernameOrMailOrPhone: 'shimu',
+  password: 'shimu',
   code: ''
 })
-
+// 定义全局状态
 const state = reactive({
   open: false
 })
-
+// 定义登录表单的验证规则
 const rulesRef = reactive({
   usernameOrMailOrPhone: [
     {
@@ -40,19 +42,19 @@ const rulesRef = reactive({
     }
   ]
 })
-
+// 使用Form.useForm创建表单
 const { validate, validateInfos } = useForm(formState, rulesRef)
-
+// 定义注册表单的初始状态
 const registerForm = reactive({
-  username: 'admin',
-  password: 'admin123456',
-  realName: '',
+  username: 'shimu',
+  password: 'shimu',
+  realName: '拾木',
   idType: 0,
-  idCard: '',
-  phone: '',
-  mail: ''
+  idCard: '4203252001010100',
+  phone: '187745712',
+  mail: '001@qq.com'
 })
-
+// 定义注册表单的验证规则
 const registerRules = reactive({
   username: [
     {
@@ -97,14 +99,14 @@ const registerRules = reactive({
     }
   ]
 })
-
+// 使用Form.useForm创建注册表单
 const { validate: registerValidate, validateInfos: registerValidateInfos } =
   useForm(registerForm, registerRules)
-
+// 创建一个ref用于保存当前的操作（登录或注册）
 let currentAction = ref('login')
-
+// 获取路由实例
 const router = useRouter()
-
+// 处理登录按钮点击事件
 const handleFinish = () => {
   if (location.host.indexOf('12306') !== -1) {
     validate()
@@ -129,7 +131,7 @@ const handleFinish = () => {
     })
   })
 }
-
+// 处理登录按钮点击事件（带验证码）
 const handleLogin = () => {
   if (!formState.code) return message.error('请输入验证码')
   validate()
@@ -150,32 +152,51 @@ const handleLogin = () => {
     })
     .catch((err) => console.log(err))
 }
-
+// 处理注册按钮点击事件
 const registerSubmit = () => {
+  // 如果当前主机包含 '12306'
   if (location.host.indexOf('12306') !== -1) {
-    message.info('关注公众获取验证码登录哦！')
+    message.info('hello 12306')
+    // 将当前操作设置为登录
     currentAction.value = 'login'
+    // 结束函数执行
     return
   }
+
+  // 验证注册表单
   registerValidate()
-    .then(() => {
-      fetchRegister(registerForm).then((res) => {
-        if (res.success) {
-          message.success('注册成功')
-          currentAction.value = 'login'
-          formState.usernameOrMailOrPhone = res.data?.username
-          formState.password = ''
-        } else {
-          message.error(res.message)
-        }
+      .then(() => {
+        // 调用 fetchRegister 方法提交注册表单数据
+        fetchRegister(registerForm).then((res) => {
+          // 如果注册成功
+          if (res.success) {
+            // 显示注册成功消息
+            message.success('注册成功')
+            // 将当前操作设置为登录
+            currentAction.value = 'login'
+            // 更新登录表单的用户名
+            formState.usernameOrMailOrPhone = res.data?.username
+            // 清空密码字段
+            formState.password = ''
+          } else {
+            // 如果注册失败，显示错误消息
+            message.error(res.message)
+          }
+        })
       })
-    })
-    .catch((err) => console.log(err))
+      .catch((err) => {
+        // 如果验证或注册过程中发生错误，输出错误信息到控制台
+        console.log(err)
+      })
 }
 </script>
+
+<!-- 页面模板部分 -->
 <template>
+  <!-- 页面整体结构 -->
   <div class="login-wrapper">
     <div class="title-wrapper">
+      <!-- 页面标题 -->
       <!-- <h1 class="title">铁路12306</h1>
       <h3 class="desc">其他文案</h3> -->
     </div>
@@ -185,15 +206,18 @@ const registerSubmit = () => {
         <h3>欢迎登录账号！</h3>
         <button @click="() => (currentAction = 'login')">去登录</button>
       </div>
+      <!-- 注册信息框 -->
       <div class="register-info-box">
         <h2>没有账号？</h2>
         <h3>欢迎注册账号！</h3>
         <button @click="() => (currentAction = 'register')">去注册</button>
       </div>
+      <!-- 白色面板，显示登录或注册内容 -->
       <div
         class="white-panel"
         :class="{ 'white-panel-left': currentAction === 'register' }"
       >
+        <!-- 登录表单 -->
         <div class="login-show" v-if="currentAction === 'login'">
           <h1 class="title">登录</h1>
           <Form name="basic" autocomplete="off">
@@ -222,6 +246,7 @@ const registerSubmit = () => {
             <FormItem>
               <div class="action-btn">
                 <a href="">忘记密码？</a>
+                <!-- 登录按钮 -->
                 <Button
                   type="primary"
                   :style="{ backgroundColor: '#202020', border: 'none' }"
@@ -232,9 +257,13 @@ const registerSubmit = () => {
             </FormItem>
           </Form>
         </div>
+        <!-- 注册表单 -->
         <div class="register-show" v-else>
+          <!-- 注册表单标题 -->
           <h1 class="title">注册</h1>
+          <!-- 表单组件 -->
           <Form name="basic" autocomplete="off" :label-col="{ span: 6 }">
+            <!-- 用户名输入框 -->
             <FormItem label="用户名" v-bind="registerValidateInfos.username">
               <Input
                 v-model:value="registerForm.username"
@@ -242,6 +271,7 @@ const registerSubmit = () => {
               >
               </Input>
             </FormItem>
+            <!-- 密码输入框 -->
             <FormItem label="密码" v-bind="registerValidateInfos.password">
               <InputPassword
                 v-model:value="registerForm.password"
@@ -249,7 +279,7 @@ const registerSubmit = () => {
               >
               </InputPassword>
             </FormItem>
-
+            <!-- 姓名输入框 -->
             <FormItem label="姓名" v-bind="registerValidateInfos.realName">
               <Input
                 v-model:value="registerForm.realName"
@@ -257,6 +287,7 @@ const registerSubmit = () => {
               >
               </Input>
             </FormItem>
+            <!-- 证件类型选择框 -->
             <FormItem label="证件类型" v-bind="registerValidateInfos.idType">
               <Select
                 :options="[{ value: 0, label: '中国居民身份证' }]"
@@ -264,6 +295,7 @@ const registerSubmit = () => {
                 placeholder="请选择证件类型"
               ></Select>
             </FormItem>
+            <!-- 证件号码输入框 -->
             <FormItem label="证件号码" v-bind="registerValidateInfos.idCard">
               <Input
                 v-model:value="registerForm.idCard"
@@ -271,6 +303,7 @@ const registerSubmit = () => {
               >
               </Input>
             </FormItem>
+            <!-- 手机号码输入框 -->
             <FormItem label="手机号码" v-bind="registerValidateInfos.phone">
               <Input
                 v-model:value="registerForm.phone"
@@ -278,6 +311,7 @@ const registerSubmit = () => {
               >
               </Input>
             </FormItem>
+            <!-- 邮箱输入框 -->
             <FormItem label="邮件" v-bind="registerValidateInfos.mail">
               <Input
                 v-model:value="registerForm.mail"
@@ -285,6 +319,7 @@ const registerSubmit = () => {
               >
               </Input>
             </FormItem>
+            <!-- 注册按钮 -->
             <FormItem>
               <div class="action-btn">
                 <a></a>
@@ -311,15 +346,6 @@ const registerSubmit = () => {
     centered
   >
     <div class="wrapper">
-      <h1 class="tip-text">
-        {{
-          `扫码下方二维码，关注后回复：12306，获取拿个offer-12306在线购票系统人机验证码`
-        }}
-      </h1>
-      <img
-        src="https://images-machen.oss-cn-beijing.aliyuncs.com/1_990064918_171_86_3_722467528_78457b21279219802d38525d32a77f39.png"
-        alt="微信公众号"
-      />
       <div class="code-input">
         <label class="code-label">验证码</label>
         <Input

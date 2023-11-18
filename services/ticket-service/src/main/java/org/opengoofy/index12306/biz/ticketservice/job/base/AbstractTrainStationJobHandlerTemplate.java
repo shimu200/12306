@@ -1,20 +1,3 @@
-/*
- * Licensed to the Apache Software Foundation (ASF) under one or more
- * contributor license agreements.  See the NOTICE file distributed with
- * this work for additional information regarding copyright ownership.
- * The ASF licenses this file to You under the Apache License, Version 2.0
- * (the "License"); you may not use this file except in compliance with
- * the License.  You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 package org.opengoofy.index12306.biz.ticketservice.job.base;
 
 import cn.hutool.core.collection.CollUtil;
@@ -36,8 +19,6 @@ import java.util.Optional;
 
 /**
  * 抽象列车&车票相关定时任务
- *
- * @公众号：马丁玩编程，回复：加群，添加马哥微信（备注：12306）获取项目资料
  */
 public abstract class AbstractTrainStationJobHandlerTemplate extends IJobHandler {
 
@@ -50,26 +31,41 @@ public abstract class AbstractTrainStationJobHandlerTemplate extends IJobHandler
 
     @Override
     public void execute() {
+        // 初始化分页参数
         var currentPage = 1L;
         var size = 1000L;
+        // 获取作业的请求参数
         var requestParam = getJobRequestParam();
+        // 解析请求参数，如果为空则使用明天的日期
         var dateTime = StrUtil.isNotBlank(requestParam) ? DateUtil.parse(requestParam, "yyyy-MM-dd") : DateUtil.tomorrow();
+        // 获取列车信息映射器
         var trainMapper = ApplicationContextHolder.getBean(TrainMapper.class);
+        // 循环执行任务，直到所有记录都被处理
         for (; ; currentPage++) {
+            // 构建查询条件，查询当天的列车信息
             var queryWrapper = Wrappers.lambdaQuery(TrainDO.class)
                     .between(TrainDO::getDepartureTime, DateUtil.beginOfDay(dateTime), DateUtil.endOfDay(dateTime));
+            // 分页查询列车信息
             var trainDOPage = trainMapper.selectPage(new Page<>(currentPage, size), queryWrapper);
+            // 如果分页结果为空或记录为空，结束循环
             if (trainDOPage == null || CollUtil.isEmpty(trainDOPage.getRecords())) {
                 break;
             }
+            // 获取当前分页的列车信息记录
             var trainDOPageRecords = trainDOPage.getRecords();
+            // 调用实际执行方法，由子类具体实现
             actualExecute(trainDOPageRecords);
         }
     }
 
+    // 获取作业的请求参数
     private String getJobRequestParam() {
         return EnvironmentUtil.isDevEnvironment()
-                ? Optional.ofNullable(((ServletRequestAttributes) RequestContextHolder.getRequestAttributes())).map(ServletRequestAttributes::getRequest).map(each -> each.getHeader("requestParam")).orElse(null)
+                ? Optional.ofNullable(((ServletRequestAttributes) RequestContextHolder.getRequestAttributes()))
+                .map(ServletRequestAttributes::getRequest)
+                .map(each -> each.getHeader("requestParam"))
+                .orElse(null)
                 : XxlJobHelper.getJobParam();
     }
 }
+

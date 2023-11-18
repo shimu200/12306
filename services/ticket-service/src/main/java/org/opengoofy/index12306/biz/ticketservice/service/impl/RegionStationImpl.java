@@ -1,20 +1,3 @@
-/*
- * Licensed to the Apache Software Foundation (ASF) under one or more
- * contributor license agreements.  See the NOTICE file distributed with
- * this work for additional information regarding copyright ownership.
- * The ASF licenses this file to You under the Apache License, Version 2.0
- * (the "License"); you may not use this file except in compliance with
- * the License.  You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 package org.opengoofy.index12306.biz.ticketservice.service.impl;
 
 import cn.hutool.core.collection.CollUtil;
@@ -41,19 +24,16 @@ import org.opengoofy.index12306.framework.starter.convention.exception.ClientExc
 import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
 import org.springframework.stereotype.Service;
+
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 import static org.opengoofy.index12306.biz.ticketservice.common.constant.Index12306Constant.ADVANCE_TICKET_DAY;
-import static org.opengoofy.index12306.biz.ticketservice.common.constant.RedisKeyConstant.STATION_ALL;
-import static org.opengoofy.index12306.biz.ticketservice.common.constant.RedisKeyConstant.REGION_STATION;
-import static org.opengoofy.index12306.biz.ticketservice.common.constant.RedisKeyConstant.LOCK_QUERY_REGION_STATION_LIST;
+import static org.opengoofy.index12306.biz.ticketservice.common.constant.RedisKeyConstant.*;
 
 /**
  * 地区以及车站接口实现层
- *
- * @公众号：马丁玩编程，回复：加群，添加马哥微信（备注：12306）获取项目资料
  */
 @Service
 @RequiredArgsConstructor
@@ -66,11 +46,13 @@ public class RegionStationImpl implements RegionStationService {
 
     @Override
     public List<RegionStationQueryRespDTO> listRegionStation(RegionStationQueryReqDTO requestParam) {
+        // 拼接缓存键
         String key;
         if (StrUtil.isNotBlank(requestParam.getName())) {
-            key  = REGION_STATION  + requestParam.getName();
+            key = REGION_STATION + requestParam.getName();
+            // 查询并返回站点信息，根据名称进行模糊匹配
             return safeGetRegionStation(
-                    key ,
+                    key,
                     () -> {
                         LambdaQueryWrapper<StationDO> queryWrapper = Wrappers.lambdaQuery(StationDO.class)
                                 .likeRight(StationDO::getName, requestParam.getName())
@@ -82,7 +64,8 @@ public class RegionStationImpl implements RegionStationService {
                     requestParam.getName()
             );
         }
-        key  = REGION_STATION  + requestParam.getQueryType();
+        // 根据查询类型拼接缓存键
+        key = REGION_STATION + requestParam.getQueryType();
         LambdaQueryWrapper<RegionDO> queryWrapper = switch (requestParam.getQueryType()) {
             case 0 -> Wrappers.lambdaQuery(RegionDO.class)
                     .eq(RegionDO::getPopularFlag, FlagEnum.TRUE.code());
@@ -98,6 +81,7 @@ public class RegionStationImpl implements RegionStationService {
                     .in(RegionDO::getInitial, RegionStationQueryTypeEnum.U_Z.getSpells());
             default -> throw new ClientException("查询失败，请检查查询参数是否正确");
         };
+        // 查询并返回区域信息，根据查询类型进行不同的条件过滤
         return safeGetRegionStation(
                 key,
                 () -> {
@@ -107,6 +91,7 @@ public class RegionStationImpl implements RegionStationService {
                 String.valueOf(requestParam.getQueryType())
         );
     }
+
 
     @Override
     public List<StationQueryRespDTO> listAllStation() {
@@ -119,7 +104,7 @@ public class RegionStationImpl implements RegionStationService {
         );
     }
 
-    private  List<RegionStationQueryRespDTO> safeGetRegionStation(final String key, CacheLoader<String> loader, String param) {
+    private List<RegionStationQueryRespDTO> safeGetRegionStation(final String key, CacheLoader<String> loader, String param) {
         List<RegionStationQueryRespDTO> result;
         if (CollUtil.isNotEmpty(result = JSON.parseArray(distributedCache.get(key, String.class), RegionStationQueryRespDTO.class))) {
             return result;

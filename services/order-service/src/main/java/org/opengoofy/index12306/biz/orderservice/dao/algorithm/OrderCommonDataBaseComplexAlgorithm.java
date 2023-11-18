@@ -1,20 +1,3 @@
-/*
- * Licensed to the Apache Software Foundation (ASF) under one or more
- * contributor license agreements.  See the NOTICE file distributed with
- * this work for additional information regarding copyright ownership.
- * The ASF licenses this file to You under the Apache License, Version 2.0
- * (the "License"); you may not use this file except in compliance with
- * the License.  You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 package org.opengoofy.index12306.biz.orderservice.dao.algorithm;
 
 import cn.hutool.core.collection.CollUtil;
@@ -31,8 +14,6 @@ import java.util.Properties;
 
 /**
  * 订单数据库复合分片算法配置
- *
- * @公众号：马丁玩编程，回复：加群，添加马哥微信（备注：12306）获取项目资料
  */
 public class OrderCommonDataBaseComplexAlgorithm implements ComplexKeysShardingAlgorithm {
 
@@ -47,37 +28,57 @@ public class OrderCommonDataBaseComplexAlgorithm implements ComplexKeysShardingA
 
     @Override
     public Collection<String> doSharding(Collection availableTargetNames, ComplexKeysShardingValue shardingValue) {
+        // 获取列名和分片值的映射
         Map<String, Collection<Comparable<Long>>> columnNameAndShardingValuesMap = shardingValue.getColumnNameAndShardingValuesMap();
+
+        // 存储分片结果的集合
         Collection<String> result = new LinkedHashSet<>(availableTargetNames.size());
+
+        // 判断列名和分片值映射是否非空
         if (CollUtil.isNotEmpty(columnNameAndShardingValuesMap)) {
             String userId = "user_id";
+            // 获取用户ID对应的分片值集合
             Collection<Comparable<Long>> customerUserIdCollection = columnNameAndShardingValuesMap.get(userId);
+            // 判断用户ID分片值集合是否非空
             if (CollUtil.isNotEmpty(customerUserIdCollection)) {
                 String dbSuffix;
+                // 获取第一个用户ID分片值
                 Comparable<?> comparable = customerUserIdCollection.stream().findFirst().get();
+                // 判断用户ID分片值类型
                 if (comparable instanceof String) {
                     String actualUserId = comparable.toString();
+                    // 对用户ID进行哈希分片，取后6位，再对分片数和表的分片数取模
                     dbSuffix = String.valueOf(hashShardingValue(actualUserId.substring(Math.max(actualUserId.length() - 6, 0))) % shardingCount / tableShardingCount);
                 } else {
+                    // 对Long类型的用户ID进行哈希分片，再对分片数和表的分片数取模
                     dbSuffix = String.valueOf(hashShardingValue((Long) comparable % 1000000) % shardingCount / tableShardingCount);
                 }
+                // 构造数据源名称并加入结果集合
                 result.add("ds_" + dbSuffix);
             } else {
                 String orderSn = "order_sn";
                 String dbSuffix;
+                // 获取订单号对应的分片值集合
                 Collection<Comparable<Long>> orderSnCollection = columnNameAndShardingValuesMap.get(orderSn);
+                // 获取第一个订单号分片值
                 Comparable<?> comparable = orderSnCollection.stream().findFirst().get();
+                // 判断订单号分片值类型
                 if (comparable instanceof String) {
                     String actualOrderSn = comparable.toString();
+                    // 对订单号进行哈希分片，取后6位，再对分片数和表的分片数取模
                     dbSuffix = String.valueOf(hashShardingValue(actualOrderSn.substring(Math.max(actualOrderSn.length() - 6, 0))) % shardingCount / tableShardingCount);
                 } else {
+                    // 对Long类型的订单号进行哈希分片，再对分片数和表的分片数取模
                     dbSuffix = String.valueOf(hashShardingValue((Long) comparable % 1000000) % shardingCount / tableShardingCount);
                 }
+                // 构造数据源名称并加入结果集合
                 result.add("ds_" + dbSuffix);
             }
         }
+
         return result;
     }
+
 
     @Override
     public void init(Properties props) {

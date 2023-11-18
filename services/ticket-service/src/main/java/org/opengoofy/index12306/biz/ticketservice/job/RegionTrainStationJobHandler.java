@@ -1,20 +1,3 @@
-/*
- * Licensed to the Apache Software Foundation (ASF) under one or more
- * contributor license agreements.  See the NOTICE file distributed with
- * this work for additional information regarding copyright ownership.
- * The ASF licenses this file to You under the Apache License, Version 2.0
- * (the "License"); you may not use this file except in compliance with
- * the License.  You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 package org.opengoofy.index12306.biz.ticketservice.job;
 
 import cn.hutool.core.collection.CollUtil;
@@ -50,47 +33,54 @@ import static org.opengoofy.index12306.biz.ticketservice.common.constant.RedisKe
 
 /**
  * 地区站点查询定时任务
- *
- * @公众号：马丁玩编程，回复：加群，添加马哥微信（备注：12306）获取项目资料
  */
 @RestController
 @RequiredArgsConstructor
 public class RegionTrainStationJobHandler extends IJobHandler {
 
-    private final RegionMapper regionMapper;
-    private final TrainStationRelationMapper trainStationRelationMapper;
-    private final DistributedCache distributedCache;
+    private final RegionMapper regionMapper;  // 区域映射器
+    private final TrainStationRelationMapper trainStationRelationMapper;  // 列车站点关系映射器
+    private final DistributedCache distributedCache;  // 分布式缓存
 
     @XxlJob(value = "regionTrainStationJobHandler")
     @GetMapping("/api/ticket-service/region-train-station/job/cache-init/execute")
     @Override
     public void execute() {
+        // 获取所有区域列表
         List<String> regionList = regionMapper.selectList(Wrappers.emptyWrapper())
                 .stream()
                 .map(RegionDO::getName)
                 .collect(Collectors.toList());
+        // 获取作业的请求参数
         String requestParam = getJobRequestParam();
         var dateTime = StrUtil.isNotBlank(requestParam) ? requestParam : DateUtil.tomorrow().toDateStr();
+        // 遍历区域列表，初始化缓存
         for (int i = 0; i < regionList.size(); i++) {
             for (int j = 0; j < regionList.size(); j++) {
                 if (i != j) {
                     String startRegion = regionList.get(i);
                     String endRegion = regionList.get(j);
+                    // 查询列车站点关系
                     LambdaQueryWrapper<TrainStationRelationDO> relationQueryWrapper = Wrappers.lambdaQuery(TrainStationRelationDO.class)
                             .eq(TrainStationRelationDO::getStartRegion, startRegion)
                             .eq(TrainStationRelationDO::getEndRegion, endRegion);
                     List<TrainStationRelationDO> trainStationRelationDOList = trainStationRelationMapper.selectList(relationQueryWrapper);
+                    // 如果关系列表为空，继续下一组关系
                     if (CollUtil.isEmpty(trainStationRelationDOList)) {
                         continue;
                     }
+                    // 构建缓存数据
                     Set<ZSetOperations.TypedTuple<String>> tuples = new HashSet<>();
                     for (TrainStationRelationDO item : trainStationRelationDOList) {
                         String zSetKey = StrUtil.join("_", item.getTrainId(), item.getDeparture(), item.getArrival());
                         ZSetOperations.TypedTuple<String> tuple = ZSetOperations.TypedTuple.of(zSetKey, Double.valueOf(item.getDepartureTime().getTime()));
                         tuples.add(tuple);
                     }
+                    // 获取分布式缓存的实例
                     StringRedisTemplate stringRedisTemplate = (StringRedisTemplate) distributedCache.getInstance();
+                    // 构建缓存键
                     String buildCacheKey = REGION_TRAIN_STATION + StrUtil.join("_", startRegion, endRegion, dateTime);
+                    // 将数据添加到有序集合（ZSet）中，并设置过期时间
                     stringRedisTemplate.opsForZSet().add(buildCacheKey, tuples);
                     stringRedisTemplate.expire(buildCacheKey, ADVANCE_TICKET_DAY, TimeUnit.DAYS);
                 }
@@ -98,9 +88,11 @@ public class RegionTrainStationJobHandler extends IJobHandler {
         }
     }
 
+    // 获取作业的请求参数
     private String getJobRequestParam() {
         return EnvironmentUtil.isDevEnvironment()
                 ? ((ServletRequestAttributes) RequestContextHolder.getRequestAttributes()).getRequest().getHeader("requestParam")
                 : XxlJobHelper.getJobParam();
     }
 }
+

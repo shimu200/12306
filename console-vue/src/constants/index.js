@@ -4,8 +4,16 @@ const TICKET_TYPE_LIST = [
     value: 0
   },
   {
-    label: '学生票',
+    label: '儿童票',
     value: 1
+  },
+  {
+    label: '学生票',
+    value: 2
+  },
+  {
+    label: '残疾军人票',
+    value: 3
   }
 ]
 
@@ -96,8 +104,8 @@ const SEAT_NAME_MAP = [
   {
     1: {
       businessClass: '商务座',
-      businessClass: '商务座',
-      businessClass: '商务座'
+      firstClass: '一等座',
+      secondClass: '二等座'
     }
   }
 ]
