@@ -416,7 +416,6 @@ public class TicketServiceImpl extends ServiceImpl<TicketMapper, TicketDO> imple
         // 责任链模式，验证 1：参数必填 2：参数正确性 3：乘客是否已买当前车次等...
         purchaseTicketAbstractChainContext.handler(TicketChainMarkEnum.TRAIN_PURCHASE_TICKET_FILTER.name(), requestParam);
         // v1 版本购票存在 4 个较为严重的问题，v2 版本相比较 v1 版本更具有业务特点以及性能，整体提升较大
-        // 写了详细的 v2 版本购票升级指南，欢迎查阅 https://nageoffer.com/12306/question
         String lockKey = environment.resolvePlaceholders(String.format(LOCK_PURCHASE_TICKETS, requestParam.getTrainId()));
         RLock lock = redissonClient.getLock(lockKey);
         lock.lock();
@@ -440,7 +439,6 @@ public class TicketServiceImpl extends ServiceImpl<TicketMapper, TicketDO> imple
             throw new ServiceException("列车站点已无余票");
         }
         // v1 版本购票存在 4 个较为严重的问题，v2 版本相比较 v1 版本更具有业务特点以及性能，整体提升较大
-        // 写了详细的 v2 版本购票升级指南，欢迎查阅 https://nageoffer.com/12306/question
         List<ReentrantLock> localLockList = new ArrayList<>();
         List<RLock> distributedLockList = new ArrayList<>();
         Map<Integer, List<PurchaseTicketPassengerDetailDTO>> seatTypeMap = requestParam.getPassengers().stream()
@@ -480,10 +478,18 @@ public class TicketServiceImpl extends ServiceImpl<TicketMapper, TicketDO> imple
         }
     }
 
+    /**
+     * 执行购票操作，并生成相应的订单信息。
+     *
+     * @param requestParam 购票请求参数对象
+     * @return 购票响应DTO，包含订单号和购票详情列表
+     */
     @Override
     @Transactional(rollbackFor = Throwable.class)
     public TicketPurchaseRespDTO executePurchaseTickets(PurchaseTicketReqDTO requestParam) {
+        // 初始化购票详情结果列表
         List<TicketOrderDetailRespDTO> ticketOrderDetailResults = new ArrayList<>();
+        // 从分布式缓存中获取火车信息
         String trainId = requestParam.getTrainId();
         TrainDO trainDO = distributedCache.safeGet(
                 TRAIN_INFO + trainId,
@@ -491,7 +497,9 @@ public class TicketServiceImpl extends ServiceImpl<TicketMapper, TicketDO> imple
                 () -> trainMapper.selectById(trainId),
                 ADVANCE_TICKET_DAY,
                 TimeUnit.DAYS);
+        // 通过火车座位类型选择器选择座位信息
         List<TrainPurchaseTicketRespDTO> trainPurchaseTicketResults = trainSeatTypeSelector.select(trainDO.getTrainType(), requestParam);
+        // 构建购票信息对象列表
         List<TicketDO> ticketDOList = trainPurchaseTicketResults.stream()
                 .map(each -> TicketDO.builder()
                         .username(UserContext.getUsername())
@@ -502,9 +510,13 @@ public class TicketServiceImpl extends ServiceImpl<TicketMapper, TicketDO> imple
                         .ticketStatus(TicketStatusEnum.UNPAID.getCode())
                         .build())
                 .toList();
+
+        // 批量保存购票信息
         saveBatch(ticketDOList);
+        // 远程调用订单服务创建订单
         Result<String> ticketOrderResult;
         try {
+            // 构建订单项创建请求DTO列表
             List<TicketOrderItemCreateRemoteReqDTO> orderItemCreateRemoteReqDTOList = new ArrayList<>();
             trainPurchaseTicketResults.forEach(each -> {
                 TicketOrderItemCreateRemoteReqDTO orderItemCreateRemoteReqDTO = TicketOrderItemCreateRemoteReqDTO.builder()
@@ -531,11 +543,13 @@ public class TicketServiceImpl extends ServiceImpl<TicketMapper, TicketDO> imple
                 orderItemCreateRemoteReqDTOList.add(orderItemCreateRemoteReqDTO);
                 ticketOrderDetailResults.add(ticketOrderDetailRespDTO);
             });
+            // 查询火车站点关系信息
             LambdaQueryWrapper<TrainStationRelationDO> queryWrapper = Wrappers.lambdaQuery(TrainStationRelationDO.class)
                     .eq(TrainStationRelationDO::getTrainId, trainId)
                     .eq(TrainStationRelationDO::getDeparture, requestParam.getDeparture())
                     .eq(TrainStationRelationDO::getArrival, requestParam.getArrival());
             TrainStationRelationDO trainStationRelationDO = trainStationRelationMapper.selectOne(queryWrapper);
+            // 构建订单创建请求DTO
             TicketOrderCreateRemoteReqDTO orderCreateRemoteReqDTO = TicketOrderCreateRemoteReqDTO.builder()
                     .departure(requestParam.getDeparture())
                     .arrival(requestParam.getArrival())
@@ -550,7 +564,9 @@ public class TicketServiceImpl extends ServiceImpl<TicketMapper, TicketDO> imple
                     .trainId(Long.parseLong(requestParam.getTrainId()))
                     .ticketOrderItems(orderItemCreateRemoteReqDTOList)
                     .build();
+            // 调用订单服务创建订单
             ticketOrderResult = ticketOrderRemoteService.createTicketOrder(orderCreateRemoteReqDTO);
+            // 处理订单服务调用结果
             if (!ticketOrderResult.isSuccess() || StrUtil.isBlank(ticketOrderResult.getData())) {
                 log.error("订单服务调用失败，返回结果：{}", ticketOrderResult.getMessage());
                 throw new ServiceException("订单服务调用失败");
@@ -559,6 +575,7 @@ public class TicketServiceImpl extends ServiceImpl<TicketMapper, TicketDO> imple
             log.error("远程调用订单服务创建错误，请求参数：{}", JSON.toJSONString(requestParam), ex);
             throw ex;
         }
+        // 返回购票响应DTO
         return new TicketPurchaseRespDTO(ticketOrderResult.getData(), ticketOrderDetailResults);
     }
 

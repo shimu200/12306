@@ -183,16 +183,20 @@ public class UserLoginServiceImpl implements UserLoginService {
     @Transactional(rollbackFor = Exception.class)
     @Override
     public UserRegisterRespDTO register(UserRegisterReqDTO requestParam) {
+        // 用户注册过滤器处理
         abstractChainContext.handler(UserChainMarkEnum.USER_REGISTER_FILTER.name(), requestParam);
+        // 获取用户注册分布式锁
         RLock lock = redissonClient.getLock(LOCK_USER_REGISTER + requestParam.getUsername());
         boolean tryLock = lock.tryLock();
         if (!tryLock) {
+            // 如果获取锁失败，抛出异常
             throw new ServiceException(HAS_USERNAME_NOTNULL);
         }
         try {
             try {
+                // 将用户注册请求参数转换为UserDO并插入数据库
                 int inserted = userMapper.insert(BeanUtil.convert(requestParam, UserDO.class));
-                // 插入用户信息到数据库，如果插入行数小于1，说明插入失败，抛出异常
+                // 如果插入行数小于1，说明插入失败，抛出异常
                 if (inserted < 1) {
                     throw new ServiceException(USER_REGISTER_FAIL);
                 }
@@ -201,7 +205,6 @@ public class UserLoginServiceImpl implements UserLoginService {
                 log.error("用户名 [{}] 重复注册", requestParam.getUsername());
                 throw new ServiceException(HAS_USERNAME_NOTNULL);
             }
-
             // 插入用户手机号信息到数据库
             UserPhoneDO userPhoneDO = UserPhoneDO.builder()
                     .phone(requestParam.getPhone())
@@ -214,7 +217,6 @@ public class UserLoginServiceImpl implements UserLoginService {
                 log.error("用户 [{}] 注册手机号 [{}] 重复", requestParam.getUsername(), requestParam.getPhone());
                 throw new ServiceException(PHONE_REGISTERED);
             }
-
             // 如果用户注册时提供了邮箱，插入用户邮箱信息到数据库
             if (StrUtil.isNotBlank(requestParam.getMail())) {
                 UserMailDO userMailDO = UserMailDO.builder()
@@ -239,9 +241,10 @@ public class UserLoginServiceImpl implements UserLoginService {
             // 无论是否发生异常，都在最终块中释放分布式锁
             lock.unlock();
         }
-        //将插入的对象转化为对应的DTO类型
+        // 将插入的对象转化为对应的DTO类型并返回
         return BeanUtil.convert(requestParam, UserRegisterRespDTO.class);
     }
+
 
     @Transactional(rollbackFor = Exception.class)
     @Override
